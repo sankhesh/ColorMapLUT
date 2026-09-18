@@ -1,0 +1,22 @@
+[project]
+name = "colormaplut"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Sankhesh Jhaveri", email = "sankhesh.jhaveri@kitware.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "trame>=4.0.0",
+    "trame-vtk>=2.8.13",
+    "trame-vuetify>=3.2.6",
+    "vtk>=9.7.0",
+]
+
+[project.scripts]
+colormaplut = "colormaplut:main"
+
+[build-system]
+requires = ["uv_build>=0.12.16,<0.13.0"]
+build-backend = "uv_build"
