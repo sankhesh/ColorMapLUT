@@ -18,23 +18,9 @@ dataset.DeepCopy(source.GetOutput())
 scalars = dataset.GetPointData().GetScalars()
 arr = vtk_to_numpy(scalars).astype(np.float32)
 
-# Scale the dataset explicitly to the range [-10, 10]
-arr_min, arr_max = arr.min(), arr.max()
-arr = (arr - arr_min) / (arr_max - arr_min) * 20.0 - 10.0
-
-# Reshape to 3D to easily select geometric blocks that intersect the surface
-arr_3d = arr.reshape((21, 21, 21))
-
-# Top-Right-Front corner for NaN (11x11x11 block)
-arr_3d[10:21, 10:21, 10:21] = np.nan 
-# Top-Left-Front corner for Below Range
-arr_3d[10:21, 0:10, 10:21] = -15.0
-# Bottom-Right-Front corner for Above Range
-arr_3d[0:10, 10:21, 10:21] = 15.0
-
-new_scalars = numpy_to_vtk(arr)
-new_scalars.SetName(scalars.GetName())
-dataset.GetPointData().SetScalars(new_scalars)
+original_arr = vtk_to_numpy(scalars).astype(np.float32).copy()
+original_min = original_arr.min()
+original_max = original_arr.max()
 
 # ----------------- Pipeline 1: vtkLookupTable -----------------
 mapper1 = vtk.vtkDataSetMapper()
@@ -116,6 +102,34 @@ def hex_to_rgba(hex_color):
     rgb = hex_to_rgb(hex_color)
     return rgb + (1.0,) # Alpha = 1
 
+@state.change("data_range")
+def update_data_array(data_range, **kwargs):
+    d_min, d_max = data_range
+    # Scale array to [d_min, d_max]
+    arr = (original_arr - original_min) / (original_max - original_min) * (d_max - d_min) + d_min
+    
+    # Reshape and apply out of bounds/NaN chunks
+    arr_3d = arr.reshape((21, 21, 21))
+    arr_3d[10:21, 10:21, 10:21] = np.nan 
+    arr_3d[10:21, 0:10, 10:21] = d_min - 5.0
+    arr_3d[0:10, 10:21, 10:21] = d_max + 5.0
+    
+    # Push back to dataset
+    new_scalars = numpy_to_vtk(arr)
+    new_scalars.SetName(scalars.GetName())
+    dataset.GetPointData().SetScalars(new_scalars)
+    
+    dataset.GetPointData().Modified()
+    dataset.Modified()
+    mapper1.Modified()
+    mapper2.Modified()
+    
+    renderWindow1.Render()
+    renderWindow2.Render()
+    if hasattr(ctrl, "view_update_1"):
+        ctrl.view_update_1()
+    if hasattr(ctrl, "view_update_2"):
+        ctrl.view_update_2()
 
 @state.change("use_above", "above_color", "use_below", "below_color", "nan_color", "use_log", "color_range", "show_data")
 def update_colormap(use_above, above_color, use_below, below_color, nan_color, use_log, color_range, show_data, **kwargs):
@@ -158,7 +172,20 @@ def update_colormap(use_above, above_color, use_below, below_color, nan_color, u
     # Copy the 256 exact colors from the vtkLookupTable to ensure they are identical
     import math
     
+    lut.ResetAnnotations()
+    ctf.ResetAnnotations()
     
+    # 3. Add explicit annotations for exactly 5 nodes to ensure both scalar bars match perfectly
+    for i in range(5):
+        if use_log and min_range > 0 and max_range > 0:
+            val = 10 ** (math.log10(min_range) + (math.log10(max_range) - math.log10(min_range)) * (i / 4.0))
+        else:
+            val = min_range + (max_range - min_range) * (i / 4.0)
+            
+        label = f"{val:.2f}"
+        lut.SetAnnotation(val, label)
+        ctf.SetAnnotation(val, label)
+
     for i in range(256):
         if use_log and min_range > 0 and max_range > 0:
             # Sample at the exact logarithmic bin boundaries that vtkLookupTable uses
@@ -196,6 +223,7 @@ def update_colormap(use_above, above_color, use_below, below_color, nan_color, u
 
 # Initial defaults
 state.show_data = True
+state.data_range = [-10, 10]
 state.color_range = [-5, 5]
 state.use_log = False
 state.use_above = True
@@ -211,6 +239,14 @@ with SinglePageWithDrawerLayout(server) as layout:
         with vuetify.VContainer():
             vuetify.VSwitch(v_model=("show_data",), label="Show Data", color="primary")
             vuetify.VSwitch(v_model=("use_log",), label="Log Scale", color="primary")
+            
+            vuetify.VRangeSlider(
+                v_model=("data_range",),
+                min=-500, max=500, step=1,
+                label="Data Bounds",
+                thumb_label="always",
+                class_="mt-6"
+            )
             
             vuetify.VRangeSlider(
                 v_model=("color_range",),
