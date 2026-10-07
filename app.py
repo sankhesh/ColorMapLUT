@@ -135,6 +135,20 @@ def update_data_array(data_range, **kwargs):
 def update_colormap(use_above, above_color, use_below, below_color, nan_color, use_log, color_range, show_data, **kwargs):
     min_range, max_range = color_range
     
+    # Implement ParaView's AdjustRangeForLog logic
+    if use_log and (min_range <= 0 or max_range <= 0):
+        if max_range <= 0:
+            min_range = 1.0e-4
+            max_range = 1.0
+        else:
+            min_range = max_range * 0.0001
+            min_range = min_range if min_range < 1.0 else 1.0
+            
+        # Push the fixed range back to the UI state.
+        # This will re-trigger this function, so we return early here.
+        server.state.color_range = [min_range, max_range]
+        return
+        
     actor1.SetVisibility(show_data)
     actor2.SetVisibility(show_data)
 
