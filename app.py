@@ -131,12 +131,12 @@ def update_data_array(data_range, **kwargs):
     if hasattr(ctrl, "view_update_2"):
         ctrl.view_update_2()
 
-@state.change("use_above", "above_color", "use_below", "below_color", "nan_color", "use_log", "color_range", "show_data")
-def update_colormap(use_above, above_color, use_below, below_color, nan_color, use_log, color_range, show_data, **kwargs):
+@state.change("use_above", "above_color", "use_below", "below_color", "nan_color", "scale_mode", "linthresh", "color_range", "show_data")
+def update_colormap(use_above, above_color, use_below, below_color, nan_color, scale_mode, linthresh, color_range, show_data, **kwargs):
     min_range, max_range = color_range
     
     # Implement ParaView's AdjustRangeForLog logic
-    if use_log and (min_range <= 0 or max_range <= 0):
+    if scale_mode == "Log" and (min_range <= 0 or max_range <= 0):
         if max_range <= 0:
             min_range = 1.0e-4
             max_range = 1.0
@@ -167,10 +167,15 @@ def update_colormap(use_above, above_color, use_below, below_color, nan_color, u
         
     lut.SetNanColor(*hex_to_rgba(nan_color))
     
-    if use_log:
+
+    if scale_mode == "Log":
         lut.SetScaleToLog10()
+    elif scale_mode == "Symlog":
+        lut.SetScaleToSymlog()
+        lut.SetSymlogLinearThreshold(linthresh)
     else:
         lut.SetScaleToLinear()
+
         
     lut.Build()
 
@@ -178,10 +183,15 @@ def update_colormap(use_above, above_color, use_below, below_color, nan_color, u
     ctf.RemoveAllPoints()
     ctf.SetColorSpaceToRGB() # Use RGB interpolation between the 256 points
     
-    if use_log:
+
+    if scale_mode == "Log":
         ctf.SetScaleToLog10()
+    elif scale_mode == "Symlog":
+        ctf.SetScaleToSymlog()
+        ctf.SetSymlogLinearThreshold(linthresh)
     else:
         ctf.SetScaleToLinear()
+
         
     # Copy the 256 exact colors from the vtkLookupTable to ensure they are identical
     import math
@@ -191,7 +201,7 @@ def update_colormap(use_above, above_color, use_below, below_color, nan_color, u
     
     # 3. Add explicit annotations for exactly 5 nodes to ensure both scalar bars match perfectly
     for i in range(5):
-        if use_log and min_range > 0 and max_range > 0:
+        if scale_mode == "Log" and min_range > 0 and max_range > 0:
             val = 10 ** (math.log10(min_range) + (math.log10(max_range) - math.log10(min_range)) * (i / 4.0))
         else:
             val = min_range + (max_range - min_range) * (i / 4.0)
@@ -201,7 +211,7 @@ def update_colormap(use_above, above_color, use_below, below_color, nan_color, u
         ctf.SetAnnotation(val, label)
 
     for i in range(256):
-        if use_log and min_range > 0 and max_range > 0:
+        if scale_mode == "Log" and min_range > 0 and max_range > 0:
             # Sample at the exact logarithmic bin boundaries that vtkLookupTable uses
             log_min = math.log10(min_range)
             log_max = math.log10(max_range)
@@ -239,7 +249,8 @@ def update_colormap(use_above, above_color, use_below, below_color, nan_color, u
 state.show_data = True
 state.data_range = [-10, 10]
 state.color_range = [-5, 5]
-state.use_log = False
+state.scale_mode = "Linear"
+state.linthresh = 10.0
 state.use_above = True
 state.above_color = "#00FF00"
 state.use_below = True
@@ -251,8 +262,21 @@ with SinglePageWithDrawerLayout(server) as layout:
     
     with layout.drawer:
         with vuetify.VContainer():
+
             vuetify.VSwitch(v_model=("show_data",), label="Show Data", color="primary")
-            vuetify.VSwitch(v_model=("use_log",), label="Log Scale", color="primary")
+            vuetify.VSelect(
+                v_model=("scale_mode", "Linear"),
+                items=("scale_modes", ["Linear", "Log", "Symlog"]),
+                label="Scale",
+                color="primary",
+            )
+            vuetify.VSlider(
+                v_model=("linthresh", 10.0),
+                min=0.1, max=100.0, step=0.1,
+                label="Linthresh (Symlog)",
+                v_if="scale_mode === 'Symlog'",
+            )
+
             
             vuetify.VRangeSlider(
                 v_model=("data_range",),
