@@ -92,38 +92,43 @@ renderWindowInteractor2.SetRenderWindow(renderWindow2)
 server = get_server()
 state, ctrl = server.state, server.controller
 
+
 def hex_to_rgb(hex_color):
-    hex_color = hex_color.lstrip('#')
+    hex_color = hex_color.lstrip("#")
     if len(hex_color) >= 6:
-        return tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+        return tuple(int(hex_color[i: i + 2], 16) / 255.0 for i in (0, 2, 4))
     return (1.0, 1.0, 1.0)
+
 
 def hex_to_rgba(hex_color):
     rgb = hex_to_rgb(hex_color)
-    return rgb + (1.0,) # Alpha = 1
+    return rgb + (1.0,)  # Alpha = 1
+
 
 @state.change("data_range")
 def update_data_array(data_range, **kwargs):
     d_min, d_max = data_range
     # Scale array to [d_min, d_max]
-    arr = (original_arr - original_min) / (original_max - original_min) * (d_max - d_min) + d_min
-    
+    arr = (original_arr - original_min) / (original_max - original_min) * (
+        d_max - d_min
+    ) + d_min
+
     # Reshape and apply out of bounds/NaN chunks
     arr_3d = arr.reshape((21, 21, 21))
-    arr_3d[10:21, 10:21, 10:21] = np.nan 
+    arr_3d[10:21, 10:21, 10:21] = np.nan
     arr_3d[10:21, 0:10, 10:21] = d_min - 5.0
     arr_3d[0:10, 10:21, 10:21] = d_max + 5.0
-    
+
     # Push back to dataset
     new_scalars = numpy_to_vtk(arr)
     new_scalars.SetName(scalars.GetName())
     dataset.GetPointData().SetScalars(new_scalars)
-    
+
     dataset.GetPointData().Modified()
     dataset.Modified()
     mapper1.Modified()
     mapper2.Modified()
-    
+
     renderWindow1.Render()
     renderWindow2.Render()
     if hasattr(ctrl, "view_update_1"):
@@ -131,10 +136,32 @@ def update_data_array(data_range, **kwargs):
     if hasattr(ctrl, "view_update_2"):
         ctrl.view_update_2()
 
-@state.change("use_above", "above_color", "use_below", "below_color", "nan_color", "scale_mode", "linthresh", "color_range", "show_data")
-def update_colormap(use_above, above_color, use_below, below_color, nan_color, scale_mode, linthresh, color_range, show_data, **kwargs):
+
+@state.change(
+    "use_above",
+    "above_color",
+    "use_below",
+    "below_color",
+    "nan_color",
+    "scale_mode",
+    "linthresh",
+    "color_range",
+    "show_data",
+)
+def update_colormap(
+    use_above,
+    above_color,
+    use_below,
+    below_color,
+    nan_color,
+    scale_mode,
+    linthresh,
+    color_range,
+    show_data,
+    **kwargs,
+):
     min_range, max_range = color_range
-    
+
     # Implement ParaView's AdjustRangeForLog logic
     if scale_mode == "Log" and (min_range <= 0 or max_range <= 0):
         if max_range <= 0:
@@ -143,12 +170,12 @@ def update_colormap(use_above, above_color, use_below, below_color, nan_color, s
         else:
             min_range = max_range * 0.0001
             min_range = min_range if min_range < 1.0 else 1.0
-            
+
         # Push the fixed range back to the UI state.
         # This will re-trigger this function, so we return early here.
         server.state.color_range = [min_range, max_range]
         return
-        
+
     actor1.SetVisibility(show_data)
     actor2.SetVisibility(show_data)
 
@@ -156,17 +183,16 @@ def update_colormap(use_above, above_color, use_below, below_color, nan_color, s
     lut.SetTableRange(min_range, max_range)
     lut.SetNumberOfTableValues(256)
     lut.SetHueRange(0.6667, 0.0)
-    
+
     lut.SetUseAboveRangeColor(use_above)
     if use_above:
         lut.SetAboveRangeColor(*hex_to_rgba(above_color))
-        
+
     lut.SetUseBelowRangeColor(use_below)
     if use_below:
         lut.SetBelowRangeColor(*hex_to_rgba(below_color))
-        
+
     lut.SetNanColor(*hex_to_rgba(nan_color))
-    
 
     if scale_mode == "Log":
         lut.SetScaleToLog10()
@@ -176,13 +202,11 @@ def update_colormap(use_above, above_color, use_below, below_color, nan_color, s
     else:
         lut.SetScaleToLinear()
 
-        
     lut.Build()
 
     # 2. Update vtkColorTransferFunction
     ctf.RemoveAllPoints()
-    ctf.SetColorSpaceToRGB() # Use RGB interpolation between the 256 points
-    
+    ctf.SetColorSpaceToRGB()  # Use RGB interpolation between the 256 points
 
     if scale_mode == "Log":
         ctf.SetScaleToLog10()
@@ -192,51 +216,56 @@ def update_colormap(use_above, above_color, use_below, below_color, nan_color, s
     else:
         ctf.SetScaleToLinear()
 
-        
-    # Copy the 256 exact colors from the vtkLookupTable to ensure they are identical
+    # Copy the 256 exact colors from the vtkLookupTable to ensure
+    # they are identical
     import math
-    
+
     lut.ResetAnnotations()
     ctf.ResetAnnotations()
-    
-    # 3. Add explicit annotations for exactly 5 nodes to ensure both scalar bars match perfectly
+
+    # 3. Add explicit annotations for exactly 5 nodes to ensure both
+    # scalar bars match perfectly
     for i in range(5):
         if scale_mode == "Log" and min_range > 0 and max_range > 0:
-            val = 10 ** (math.log10(min_range) + (math.log10(max_range) - math.log10(min_range)) * (i / 4.0))
+            val = 10 ** (
+                math.log10(min_range)
+                + (math.log10(max_range) - math.log10(min_range)) * (i / 4.0)
+            )
         else:
             val = min_range + (max_range - min_range) * (i / 4.0)
-            
+
         label = f"{val:.2f}"
         lut.SetAnnotation(val, label)
         ctf.SetAnnotation(val, label)
 
     for i in range(256):
         if scale_mode == "Log" and min_range > 0 and max_range > 0:
-            # Sample at the exact logarithmic bin boundaries that vtkLookupTable uses
+            # Sample at the exact logarithmic bin boundaries that
+            # vtkLookupTable uses
             log_min = math.log10(min_range)
             log_max = math.log10(max_range)
             val = 10 ** (log_min + (log_max - log_min) * (i / 255.0))
         else:
             val = min_range + (max_range - min_range) * (i / 255.0)
-            
+
         color = [0.0, 0.0, 0.0]
         lut.GetColor(val, color)
         ctf.AddRGBPoint(val, color[0], color[1], color[2])
-    
+
     ctf.SetUseAboveRangeColor(use_above)
     if use_above:
         ctf.SetAboveRangeColor(*hex_to_rgb(above_color))
-        
+
     ctf.SetUseBelowRangeColor(use_below)
     if use_below:
         ctf.SetBelowRangeColor(*hex_to_rgb(below_color))
-        
+
     ctf.SetNanColor(*hex_to_rgb(nan_color))
-    
+
     ctf.Build()
     mapper1.Modified()
     mapper2.Modified()
-    
+
     # Render both windows
     renderWindow1.Render()
     renderWindow2.Render()
@@ -244,6 +273,7 @@ def update_colormap(use_above, above_color, use_below, below_color, nan_color, s
         ctrl.view_update_1()
     if hasattr(ctrl, "view_update_2"):
         ctrl.view_update_2()
+
 
 # Initial defaults
 state.show_data = True
@@ -259,11 +289,12 @@ state.nan_color = "#FF00FF"
 
 with SinglePageWithDrawerLayout(server) as layout:
     layout.title.set_text("Color Map Comparison")
-    
+
     with layout.drawer:
         with vuetify.VContainer():
 
-            vuetify.VSwitch(v_model=("show_data",), label="Show Data", color="primary")
+            vuetify.VSwitch(v_model=("show_data",),
+                            label="Show Data", color="primary")
             vuetify.VSelect(
                 v_model=("scale_mode", "Linear"),
                 items=("scale_modes", ["Linear", "Log", "Symlog"]),
@@ -272,37 +303,67 @@ with SinglePageWithDrawerLayout(server) as layout:
             )
             vuetify.VSlider(
                 v_model=("linthresh", 10.0),
-                min=0.1, max=100.0, step=0.1,
+                min=0.1,
+                max=100.0,
+                step=0.1,
                 label="Linthresh (Symlog)",
                 v_if="scale_mode === 'Symlog'",
             )
 
-            
             vuetify.VRangeSlider(
                 v_model=("data_range",),
-                min=-500, max=500, step=1,
+                min=-500,
+                max=500,
+                step=1,
                 label="Data Bounds",
                 thumb_label="always",
-                class_="mt-6"
+                class_="mt-6",
             )
-            
+
             vuetify.VRangeSlider(
                 v_model=("color_range",),
-                min=-500, max=500, step=0.1,
+                min=-500,
+                max=500,
+                step=0.1,
                 label="Mapping Bounds",
                 thumb_label="always",
-                class_="mt-6"
+                class_="mt-6",
             )
-            
-            vuetify.VSwitch(v_model=("use_above",), label="Above Range Color", color="primary")
-            vuetify.VColorPicker(v_model=("above_color",), v_show="use_above", hide_inputs=True, width="100%", elevation=0)
-            
-            vuetify.VSwitch(v_model=("use_below",), label="Below Range Color", color="primary")
-            vuetify.VColorPicker(v_model=("below_color",), v_show="use_below", hide_inputs=True, width="100%", elevation=0)
-            
+
+            vuetify.VSwitch(
+                v_model=("use_above",),
+                label="Above Range Color",
+                color="primary"
+            )
+            vuetify.VColorPicker(
+                v_model=("above_color",),
+                v_show="use_above",
+                hide_inputs=True,
+                width="100%",
+                elevation=0,
+            )
+
+            vuetify.VSwitch(
+                v_model=("use_below",),
+                label="Below Range Color",
+                color="primary"
+            )
+            vuetify.VColorPicker(
+                v_model=("below_color",),
+                v_show="use_below",
+                hide_inputs=True,
+                width="100%",
+                elevation=0,
+            )
+
             vuetify.VLabel("NaN Color")
-            vuetify.VColorPicker(v_model=("nan_color",), hide_inputs=True, width="100%", elevation=0)
-        
+            vuetify.VColorPicker(
+                v_model=("nan_color",),
+                hide_inputs=True,
+                width="100%",
+                elevation=0
+            )
+
     with layout.content:
         with vuetify.VRow(classes="ma-0 fill-height"):
             with vuetify.VCol(cols=6, classes="pa-0"):
