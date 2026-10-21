@@ -96,7 +96,7 @@ state, ctrl = server.state, server.controller
 def hex_to_rgb(hex_color):
     hex_color = hex_color.lstrip("#")
     if len(hex_color) >= 6:
-        return tuple(int(hex_color[i: i + 2], 16) / 255.0 for i in (0, 2, 4))
+        return tuple(int(hex_color[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
     return (1.0, 1.0, 1.0)
 
 
@@ -180,6 +180,7 @@ def update_colormap(
     actor2.SetVisibility(show_data)
 
     # 1. Update vtkLookupTable
+    lut.SetScaleToLinear()
     lut.SetTableRange(min_range, max_range)
     lut.SetNumberOfTableValues(256)
     lut.SetHueRange(0.6667, 0.0)
@@ -199,8 +200,6 @@ def update_colormap(
     elif scale_mode == "Symlog":
         lut.SetScaleToSymlog()
         lut.SetSymlogLinearThreshold(linthresh)
-    else:
-        lut.SetScaleToLinear()
 
     lut.Build()
 
@@ -222,6 +221,12 @@ def update_colormap(
 
     lut.ResetAnnotations()
     ctf.ResetAnnotations()
+
+    def symlog(x, lt):
+        return math.copysign(math.log10(1.0 + abs(x) / lt), x)
+
+    def symlog_inv(y, lt):
+        return math.copysign(lt * (10.0 ** abs(y) - 1.0), y)
 
     # 3. Add explicit annotations for exactly 5 nodes to ensure both
     # scalar bars match perfectly
@@ -245,6 +250,11 @@ def update_colormap(
             log_min = math.log10(min_range)
             log_max = math.log10(max_range)
             val = 10 ** (log_min + (log_max - log_min) * (i / 255.0))
+        elif scale_mode == "Symlog":
+            s_min = symlog(min_range, linthresh)
+            s_max = symlog(max_range, linthresh)
+            val = symlog_inv(s_min + (s_max - s_min) * (i / 255.0), linthresh)
+            val = max(min_range, min(max_range, val))
         else:
             val = min_range + (max_range - min_range) * (i / 255.0)
 
@@ -293,8 +303,9 @@ with SinglePageWithDrawerLayout(server) as layout:
     with layout.drawer:
         with vuetify.VContainer():
 
-            vuetify.VSwitch(v_model=("show_data",),
-                            label="Show Data", color="primary")
+            vuetify.VSwitch(
+                v_model=("show_data",), label="Show Data", color="primary"
+            )
             vuetify.VSelect(
                 v_model=("scale_mode", "Linear"),
                 items=("scale_modes", ["Linear", "Log", "Symlog"]),
@@ -333,7 +344,7 @@ with SinglePageWithDrawerLayout(server) as layout:
             vuetify.VSwitch(
                 v_model=("use_above",),
                 label="Above Range Color",
-                color="primary"
+                color="primary",
             )
             vuetify.VColorPicker(
                 v_model=("above_color",),
@@ -346,7 +357,7 @@ with SinglePageWithDrawerLayout(server) as layout:
             vuetify.VSwitch(
                 v_model=("use_below",),
                 label="Below Range Color",
-                color="primary"
+                color="primary",
             )
             vuetify.VColorPicker(
                 v_model=("below_color",),
@@ -361,7 +372,7 @@ with SinglePageWithDrawerLayout(server) as layout:
                 v_model=("nan_color",),
                 hide_inputs=True,
                 width="100%",
-                elevation=0
+                elevation=0,
             )
 
     with layout.content:
