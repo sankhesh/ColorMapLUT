@@ -1,9 +1,10 @@
-import vtk
+import math
 import numpy as np
-from vtkmodules.util.numpy_support import vtk_to_numpy, numpy_to_vtk
 from trame.app import get_server
 from trame.ui.vuetify3 import SinglePageWithDrawerLayout
 from trame.widgets import vuetify3 as vuetify, vtk as vtk_widgets
+import vtk
+from vtkmodules.util.numpy_support import numpy_to_vtk, vtk_to_numpy
 
 # -----------------------------------------------------------------------------
 # VTK Pipeline
@@ -16,9 +17,9 @@ dataset = vtk.vtkImageData()
 dataset.DeepCopy(source.GetOutput())
 
 scalars = dataset.GetPointData().GetScalars()
-arr = vtk_to_numpy(scalars).astype(np.float32)
+arr = vtk_to_numpy(scalars).astype(np.float64)
 
-original_arr = vtk_to_numpy(scalars).astype(np.float32).copy()
+original_arr = vtk_to_numpy(scalars).astype(np.float64).copy()
 original_min = original_arr.min()
 original_max = original_arr.max()
 
@@ -96,18 +97,65 @@ state, ctrl = server.state, server.controller
 def hex_to_rgb(hex_color):
     hex_color = hex_color.lstrip("#")
     if len(hex_color) >= 6:
-        return tuple(int(hex_color[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+        return tuple(int(hex_color[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
     return (1.0, 1.0, 1.0)
 
 
 def hex_to_rgba(hex_color):
     rgb = hex_to_rgb(hex_color)
-    return rgb + (1.0,)  # Alpha = 1
+    return rgb + (1.0,)
+
+
+def symlog(x, lt):
+    return math.copysign(math.log10(1.0 + abs(x) / lt), x)
+
+
+def symlog_inv(y, lt):
+    return math.copysign(lt * (10.0 ** abs(y) - 1.0), y)
+
+
+def format_val(val):
+    if abs(val) == 0:
+        return "0.0"
+    if abs(val) < 1e-2 or abs(val) >= 1e4:
+        return f"{val:.1e}"
+    return f"{val:.2f}"
+
+
+PRESETS = {
+    "Default ([-10, 10])": {
+        "data_range": [-10.0, 10.0],
+        "color_range": [-5.0, 5.0],
+        "scale_mode": "Linear",
+        "linthresh": 10.0,
+    },
+    "QuickView HDR: ±1e6 (linthresh 1e-7)": {
+        "data_range": [-1e6, 1e6],
+        "color_range": [-1e6, 1e6],
+        "scale_mode": "Symlog",
+        "linthresh": 1e-7,
+    },
+    "QuickView #114 Trace: ±5.56e-10 (linthresh 1e-11)": {
+        "data_range": [-5.56e-10, 5.56e-10],
+        "color_range": [-5.56e-10, 5.56e-10],
+        "scale_mode": "Symlog",
+        "linthresh": 1e-11,
+    },
+    "QuickView SHFLX: [-424, 418] (linthresh 5.0)": {
+        "data_range": [-424.0, 418.0],
+        "color_range": [-424.0, 418.0],
+        "scale_mode": "Symlog",
+        "linthresh": 5.0,
+    },
+}
 
 
 @state.change("data_range")
 def update_data_array(data_range, **kwargs):
-    d_min, d_max = data_range
+    d_min, d_max = float(data_range[0]), float(data_range[1])
+    span = abs(d_max - d_min)
+    pad = span * 0.05 if span > 0 else 1.0
+
     # Scale array to [d_min, d_max]
     arr = (original_arr - original_min) / (original_max - original_min) * (
         d_max - d_min
@@ -116,8 +164,8 @@ def update_data_array(data_range, **kwargs):
     # Reshape and apply out of bounds/NaN chunks
     arr_3d = arr.reshape((21, 21, 21))
     arr_3d[10:21, 10:21, 10:21] = np.nan
-    arr_3d[10:21, 0:10, 10:21] = d_min - 5.0
-    arr_3d[0:10, 10:21, 10:21] = d_max + 5.0
+    arr_3d[10:21, 0:10, 10:21] = d_min - pad
+    arr_3d[0:10, 10:21, 10:21] = d_max + pad
 
     # Push back to dataset
     new_scalars = numpy_to_vtk(arr)
@@ -135,6 +183,66 @@ def update_data_array(data_range, **kwargs):
         ctrl.view_update_1()
     if hasattr(ctrl, "view_update_2"):
         ctrl.view_update_2()
+
+
+@state.change("selected_preset")
+def apply_preset(selected_preset, **kwargs):
+    if selected_preset in PRESETS:
+        p = PRESETS[selected_preset]
+        state.scale_mode = p["scale_mode"]
+        state.linthresh = float(p["linthresh"])
+        state.data_range = [float(p["data_range"][0]), float(p["data_range"][1])]
+        state.color_range = [float(p["color_range"][0]), float(p["color_range"][1])]
+        state.data_min_str = (
+            f"{p['data_range'][0]:.2e}"
+            if abs(p["data_range"][0]) < 1e-2 or abs(p["data_range"][0]) >= 1e4
+            else str(p["data_range"][0])
+        )
+        state.data_max_str = (
+            f"{p['data_range'][1]:.2e}"
+            if abs(p["data_range"][1]) < 1e-2 or abs(p["data_range"][1]) >= 1e4
+            else str(p["data_range"][1])
+        )
+        state.color_min_str = (
+            f"{p['color_range'][0]:.2e}"
+            if abs(p["color_range"][0]) < 1e-2 or abs(p["color_range"][0]) >= 1e4
+            else str(p["color_range"][0])
+        )
+        state.color_max_str = (
+            f"{p['color_range'][1]:.2e}"
+            if abs(p["color_range"][1]) < 1e-2 or abs(p["color_range"][1]) >= 1e4
+            else str(p["color_range"][1])
+        )
+        state.linthresh_str = (
+            f"{p['linthresh']:.2e}"
+            if p["linthresh"] < 1e-2 or p["linthresh"] >= 1e4
+            else str(p["linthresh"])
+        )
+
+
+def parse_and_apply_inputs():
+    try:
+        d_min = float(state.data_min_str)
+        d_max = float(state.data_max_str)
+        if d_min < d_max:
+            state.data_range = [d_min, d_max]
+    except ValueError, TypeError:
+        pass
+
+    try:
+        c_min = float(state.color_min_str)
+        c_max = float(state.color_max_str)
+        if c_min < c_max:
+            state.color_range = [c_min, c_max]
+    except ValueError, TypeError:
+        pass
+
+    try:
+        lt = float(state.linthresh_str)
+        if lt > 0:
+            state.linthresh = lt
+    except ValueError, TypeError:
+        pass
 
 
 @state.change(
@@ -160,7 +268,8 @@ def update_colormap(
     show_data,
     **kwargs,
 ):
-    min_range, max_range = color_range
+    min_range, max_range = float(color_range[0]), float(color_range[1])
+    linthresh = float(linthresh)
 
     # Implement ParaView's AdjustRangeForLog logic
     if scale_mode == "Log" and (min_range <= 0 or max_range <= 0):
@@ -171,8 +280,6 @@ def update_colormap(
             min_range = max_range * 0.0001
             min_range = min_range if min_range < 1.0 else 1.0
 
-        # Push the fixed range back to the UI state.
-        # This will re-trigger this function, so we return early here.
         server.state.color_range = [min_range, max_range]
         return
 
@@ -205,7 +312,7 @@ def update_colormap(
 
     # 2. Update vtkColorTransferFunction
     ctf.RemoveAllPoints()
-    ctf.SetColorSpaceToRGB()  # Use RGB interpolation between the 256 points
+    ctf.SetColorSpaceToRGB()
 
     if scale_mode == "Log":
         ctf.SetScaleToLog10()
@@ -215,38 +322,31 @@ def update_colormap(
     else:
         ctf.SetScaleToLinear()
 
-    # Copy the 256 exact colors from the vtkLookupTable to ensure
-    # they are identical
-    import math
-
     lut.ResetAnnotations()
     ctf.ResetAnnotations()
 
-    def symlog(x, lt):
-        return math.copysign(math.log10(1.0 + abs(x) / lt), x)
-
-    def symlog_inv(y, lt):
-        return math.copysign(lt * (10.0 ** abs(y) - 1.0), y)
-
-    # 3. Add explicit annotations for exactly 5 nodes to ensure both
-    # scalar bars match perfectly
+    # 3. Add explicit annotations for 5 nodes
     for i in range(5):
         if scale_mode == "Log" and min_range > 0 and max_range > 0:
             val = 10 ** (
                 math.log10(min_range)
                 + (math.log10(max_range) - math.log10(min_range)) * (i / 4.0)
             )
+        elif scale_mode == "Symlog":
+            s_min = symlog(min_range, linthresh)
+            s_max = symlog(max_range, linthresh)
+            val = symlog_inv(s_min + (s_max - s_min) * (i / 4.0), linthresh)
+            val = max(min_range, min(max_range, val))
         else:
             val = min_range + (max_range - min_range) * (i / 4.0)
 
-        label = f"{val:.2f}"
+        label = format_val(val)
         lut.SetAnnotation(val, label)
         ctf.SetAnnotation(val, label)
 
+    # Sample 256 exact points
     for i in range(256):
         if scale_mode == "Log" and min_range > 0 and max_range > 0:
-            # Sample at the exact logarithmic bin boundaries that
-            # vtkLookupTable uses
             log_min = math.log10(min_range)
             log_max = math.log10(max_range)
             val = 10 ** (log_min + (log_max - log_min) * (i / 255.0))
@@ -287,8 +387,8 @@ def update_colormap(
 
 # Initial defaults
 state.show_data = True
-state.data_range = [-10, 10]
-state.color_range = [-5, 5]
+state.data_range = [-10.0, 10.0]
+state.color_range = [-5.0, 5.0]
 state.scale_mode = "Linear"
 state.linthresh = 10.0
 state.use_above = True
@@ -296,6 +396,14 @@ state.above_color = "#00FF00"
 state.use_below = True
 state.below_color = "#FFFF00"
 state.nan_color = "#FF00FF"
+state.selected_preset = "Default ([-10, 10])"
+state.data_min_str = "-10.0"
+state.data_max_str = "10.0"
+state.color_min_str = "-5.0"
+state.color_max_str = "5.0"
+state.linthresh_str = "10.0"
+
+ctrl.parse_and_apply_inputs = parse_and_apply_inputs
 
 with SinglePageWithDrawerLayout(server) as layout:
     layout.title.set_text("Color Map Comparison")
@@ -303,8 +411,12 @@ with SinglePageWithDrawerLayout(server) as layout:
     with layout.drawer:
         with vuetify.VContainer():
 
-            vuetify.VSwitch(
-                v_model=("show_data",), label="Show Data", color="primary"
+            vuetify.VSwitch(v_model=("show_data",), label="Show Data", color="primary")
+            vuetify.VSelect(
+                v_model=("selected_preset", "Default ([-10, 10])"),
+                items=("presets", list(PRESETS.keys())),
+                label="QuickView Range Presets",
+                color="primary",
             )
             vuetify.VSelect(
                 v_model=("scale_mode", "Linear"),
@@ -312,34 +424,46 @@ with SinglePageWithDrawerLayout(server) as layout:
                 label="Scale",
                 color="primary",
             )
-            vuetify.VSlider(
-                v_model=("linthresh", 10.0),
-                min=0.1,
-                max=100.0,
-                step=0.1,
+            vuetify.VTextField(
+                v_model=("linthresh_str", "10.0"),
                 label="Linthresh (Symlog)",
                 v_if="scale_mode === 'Symlog'",
+                change=ctrl.parse_and_apply_inputs,
+                density="compact",
             )
 
-            vuetify.VRangeSlider(
-                v_model=("data_range",),
-                min=-500,
-                max=500,
-                step=1,
-                label="Data Bounds",
-                thumb_label="always",
-                class_="mt-6",
-            )
+            # Manual string inputs for high dynamic range & trace concentrations
+            with vuetify.VRow(classes="mt-1"):
+                with vuetify.VCol(cols=6):
+                    vuetify.VTextField(
+                        v_model=("data_min_str", "-10.0"),
+                        label="Data Min",
+                        density="compact",
+                        change=ctrl.parse_and_apply_inputs,
+                    )
+                with vuetify.VCol(cols=6):
+                    vuetify.VTextField(
+                        v_model=("data_max_str", "10.0"),
+                        label="Data Max",
+                        density="compact",
+                        change=ctrl.parse_and_apply_inputs,
+                    )
 
-            vuetify.VRangeSlider(
-                v_model=("color_range",),
-                min=-500,
-                max=500,
-                step=0.1,
-                label="Mapping Bounds",
-                thumb_label="always",
-                class_="mt-6",
-            )
+            with vuetify.VRow(classes="mt-1"):
+                with vuetify.VCol(cols=6):
+                    vuetify.VTextField(
+                        v_model=("color_min_str", "-5.0"),
+                        label="Map Min",
+                        density="compact",
+                        change=ctrl.parse_and_apply_inputs,
+                    )
+                with vuetify.VCol(cols=6):
+                    vuetify.VTextField(
+                        v_model=("color_max_str", "5.0"),
+                        label="Map Max",
+                        density="compact",
+                        change=ctrl.parse_and_apply_inputs,
+                    )
 
             vuetify.VSwitch(
                 v_model=("use_above",),
